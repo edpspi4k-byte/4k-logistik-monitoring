@@ -78,11 +78,11 @@
       <button id="camBtn" onclick="openScanner()" class="w-full bg-gray-800 text-white p-3 rounded-lg text-sm font-semibold disabled:opacity-60">📷 Buka Kamera & Baca Trx Id</button>
       <div id="ocrInfo" class="hidden bg-amber-50 border border-amber-200 text-amber-800 rounded-lg p-3 text-sm"></div>
       <div>
-        <label class="block text-sm font-medium text-gray-700">Trx Id <span class="text-gray-400 font-normal">(TRX + 7 angka, yang tersimpan hanya 7 angkanya)</span></label>
-        <input id="trxId" autocomplete="off" autocapitalize="characters" placeholder="contoh: TRX1234567" class="w-full mt-1 p-3 border rounded-lg font-mono uppercase text-lg tracking-wide">
+        <label class="block text-sm font-medium text-gray-700">Trx Id <span class="text-gray-400 font-normal">(7 angka; awalan TRX boleh ada atau tidak)</span></label>
+        <input id="trxId" autocomplete="off" autocapitalize="characters" placeholder="contoh: 1234567" class="w-full mt-1 p-3 border rounded-lg font-mono uppercase text-lg tracking-wide">
         <p id="trxWarn" class="hidden mt-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg p-2"></p>
       </div>
-      <label class="flex items-center gap-1 text-xs text-gray-600"><input type="checkbox" id="autoSave"> Tambah otomatis hanya jika ketiga bacaan kamera identik</label>
+      <label class="flex items-center gap-1 text-xs text-gray-600"><input type="checkbox" id="autoSave"> Tambah otomatis hanya jika dua bacaan kamera berurutan identik</label>
       <button id="addBtn" onclick="addStruk()" class="w-full bg-blue-600 text-white p-3 rounded-lg font-semibold">+ Tambah Struk</button>
       <div>
         <div class="flex justify-between text-sm font-medium text-gray-700 mb-1"><span>Daftar struk (belum diupload)</span><span id="tripCount">0 struk</span></div>
@@ -110,12 +110,12 @@
   <div class="flex-1 flex items-center justify-center overflow-hidden">
     <div id="camWrap" class="relative w-full">
       <video id="cam" playsinline muted class="w-full h-full object-cover block"></video>
-      <div class="absolute inset-x-[4%] inset-y-[36%] border-2 border-green-400 rounded pointer-events-none"></div>
+      <div class="absolute inset-x-[4%] inset-y-[42%] border-2 border-green-400 rounded pointer-events-none"></div>
     </div>
   </div>
   <div class="p-4 space-y-2">
     <p id="ocrStatus" class="text-center text-green-300 text-xs min-h-4"></p>
-    <p class="text-center text-gray-300 text-xs">Letakkan baris <b>TRX + 7 angka</b> tepat di dalam kotak hijau, sejajar dan tajam. Tahan kamera diam sekitar 1 detik saat tombol ditekan (diambil 3 foto berurutan untuk memastikan hasil benar).</p>
+    <p class="text-center text-gray-300 text-xs">Letakkan <b>satu baris Trx Id (7 angka)</b> tepat di dalam kotak hijau, sejajar dan tajam. Tahan kamera diam sekitar 1 detik saat tombol ditekan.</p>
     <button id="snapBtn" onclick="snap()" class="w-full bg-green-600 text-white p-3 rounded-lg font-semibold disabled:opacity-60">Ambil & Baca Trx Id</button>
   </div>
 </div>
@@ -201,9 +201,9 @@ function parseTrx(v) {
   const s = String(v || '').toUpperCase().replace(/\s+/g, '');
   if (!s) return { ok: false, msg: 'Trx Id belum diisi.' };
   const m = s.match(/^(?:TRX)?(\d+)$/);
-  if (!m) return { ok: false, msg: 'Format "' + s + '" salah. Trx Id harus TRX diikuti tepat ' + TRX_DIGITS + ' angka (contoh TRX1234567). Periksa kode.' };
+  if (!m) return { ok: false, msg: 'Format "' + s + '" salah. Trx Id harus tepat ' + TRX_DIGITS + ' angka (contoh 1234567, awalan TRX boleh). Periksa kode.' };
   if (m[1].length !== TRX_DIGITS)
-    return { ok: false, msg: 'Kode "TRX' + m[1] + '" terbaca ' + m[1].length + ' angka, seharusnya tepat ' + TRX_DIGITS + ' angka. Periksa kode pada struk.' };
+    return { ok: false, msg: 'Kode "' + m[1] + '" terbaca ' + m[1].length + ' angka, seharusnya tepat ' + TRX_DIGITS + ' angka. Periksa kode pada struk.' };
   return { ok: true, digits: m[1] };
 }
 
@@ -394,8 +394,10 @@ $('trxId').addEventListener('keydown', e => { if (e.key === 'Enter') { e.prevent
 /* ====== OCR: hanya mencari TRX + angka. Tanpa tebakan: huruf tidak pernah diubah jadi angka ======
    Satu bacaan menghasilkan: ok (tepat 7 angka) | bad (angka salah jumlah / lebih dari satu kode) | none */
 function extractTrx(raw) {
-  const t = String(raw || '').toUpperCase(), re = /TRX[ \t]*(\d+)/g, found = []; let m;
-  while ((m = re.exec(t))) found.push(m[1]);
+  const t = String(raw || '').toUpperCase();
+  const pick = re => { const a = []; let m; while ((m = re.exec(t))) a.push(m[1]); return a; };
+  let found = pick(/TRX[ \t]*(\d+)/g);                 // jika ada awalan TRX, angka setelahnya jadi patokan
+  if (!found.length) found = pick(/(\d{5,})/g);        // tanpa TRX: deret angka 5+ digit (angka pendek diabaikan)
   const uniq = [...new Set(found)];
   if (!uniq.length) return { s: 'none' };
   if (uniq.length === 1 && uniq[0].length === TRX_DIGITS) return { s: 'ok', d: uniq[0] };
@@ -442,7 +444,7 @@ function prepareOCR() {
     });
     // Hanya karakter yang mungkin ada di baris "Trx Id : TRX1234567" yang boleh terbaca
     await worker.setParameters({
-      tessedit_pageseg_mode: Tesseract.PSM.SINGLE_BLOCK,
+      tessedit_pageseg_mode: Tesseract.PSM.SINGLE_LINE,
       tessedit_char_whitelist: 'TRXIDtrxid: 0123456789',
       user_defined_dpi: '300',
       preserve_interword_spaces: '1'
@@ -452,10 +454,10 @@ function prepareOCR() {
   return ocrReady;
 }
 
-function grab() {                       // potong strip di dalam kotak hijau (lebar 92%, tinggi 28%), skala ke lebar ±1600px
+function grab() {                       // potong strip di dalam kotak hijau (lebar 92%, tinggi 16%), skala ke lebar ±1200px
   const v = $('cam'), vw = v.videoWidth, vh = v.videoHeight;
   if (!vw) return null;
-  const sx = vw * 0.04, sy = vh * 0.36, sw = vw * 0.92, sh = vh * 0.28, k = Math.min(2, 1600 / sw);
+  const sx = vw * 0.04, sy = vh * 0.42, sw = vw * 0.92, sh = vh * 0.16, k = Math.min(1.5, 1200 / sw);
   const c = document.createElement('canvas');
   c.width = Math.round(sw * k); c.height = Math.round(sh * k);
   c.getContext('2d', { willReadFrequently: true }).drawImage(v, sx, sy, sw, sh, 0, 0, c.width, c.height);
@@ -514,7 +516,7 @@ async function snap() {
       const c = grab(); if (!c) throw new Error('Kamera belum siap, coba lagi.');
       preprocess(c); frames.push(c);
       if (navigator.vibrate) navigator.vibrate(40);
-      if (k < FRAMES - 1) await sleep(350);
+      if (k < FRAMES - 1) await sleep(200);
     }
   } catch (e) {
     free(); ocrBusy = false; $('snapBtn').disabled = false; $('camBtn').disabled = false;
@@ -526,22 +528,24 @@ async function snap() {
   try {
     await prepareOCR();
     const reads = [];
-    for (let k = 0; k < frames.length; k++) {
+    let r = { s: 'weak' };
+    for (let k = 0; k < frames.length; k++) {           // berhenti lebih awal begitu 2 bacaan identik (lebih cepat)
       curFrame = k + 1; setInfo('Membaca Trx Id (foto ' + curFrame + '/' + FRAMES + ')... 0%');
       const { data } = await worker.recognize(frames[k]);
       reads.push(extractTrx(data.text));
+      r = consensus(reads);
+      if (r.s === 'ok') break;
     }
-    const r = consensus(reads);
     if (r.s === 'ok') {
-      $('trxId').value = 'TRX' + r.d;
+      $('trxId').value = r.d;
       beep(); toast('Trx Id terbaca: ' + r.d + '. Cocokkan dengan struk lalu tambahkan.', true, 5000);
       if ($('autoSave').checked && r.all) addStruk(); else $('trxId').focus();
-      if (!r.all) setWarn('Hanya ' + '2 dari ' + FRAMES + ' foto yang sama. Periksa baik-baik kode ' + 'TRX' + r.d + ' dengan struk sebelum menambahkan.');
+      if (!r.all) setWarn('Hanya 2 dari ' + reads.length + ' foto yang sama. Periksa baik-baik kode ' + r.d + ' dengan struk sebelum menambahkan.');
     } else {
       $('trxId').value = '';
       let msg;
-      if (r.s === 'conflict') msg = 'Bacaan tidak konsisten (' + r.list.map(d => 'TRX' + d).join(' / ') + '). Periksa kode, scan ulang dengan lebih tajam, atau ketik manual.';
-      else if (r.s === 'bad') msg = 'Terbaca ' + r.list.map(d => 'TRX' + d + ' (' + d.length + ' angka)').join(', ') + ', padahal Trx Id harus tepat ' + TRX_DIGITS + ' angka. Periksa kode pada struk, lalu scan ulang atau ketik manual.';
+      if (r.s === 'conflict') msg = 'Bacaan tidak konsisten (' + r.list.join(' / ') + '). Periksa kode, scan ulang dengan lebih tajam, atau ketik manual.';
+      else if (r.s === 'bad') msg = 'Terbaca ' + r.list.map(d => d + ' (' + d.length + ' angka)').join(', ') + ', padahal Trx Id harus tepat ' + TRX_DIGITS + ' angka. Periksa kode pada struk, lalu scan ulang atau ketik manual.';
       else msg = 'Trx Id tidak terbaca dengan yakin. Dekatkan, perjelas cahaya, pastikan baris TRX masuk kotak hijau, lalu scan ulang atau ketik manual.';
       setWarn(msg); toast('Trx Id tidak diterima. Periksa kode.', false, 6000);
     }
