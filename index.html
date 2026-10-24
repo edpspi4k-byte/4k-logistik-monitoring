@@ -78,8 +78,8 @@
       <button id="camBtn" onclick="openScanner()" class="w-full bg-gray-800 text-white p-3 rounded-lg text-sm font-semibold disabled:opacity-60">📷 Buka Kamera & Baca Trx Id</button>
       <div id="ocrInfo" class="hidden bg-amber-50 border border-amber-200 text-amber-800 rounded-lg p-3 text-sm"></div>
       <div>
-        <label class="block text-sm font-medium text-gray-700">Trx Id <span class="text-gray-400 font-normal">(7 angka; awalan TRX boleh ada atau tidak)</span></label>
-        <input id="trxId" autocomplete="off" autocapitalize="characters" placeholder="contoh: 1234567" class="w-full mt-1 p-3 border rounded-lg font-mono uppercase text-lg tracking-wide">
+        <label class="block text-sm font-medium text-gray-700">Trx Id <span class="text-gray-400 font-normal">(7 angka; awalan huruf apa pun boleh, yang tersimpan hanya 7 angkanya)</span></label>
+        <input id="trxId" autocomplete="off" autocapitalize="characters" placeholder="contoh: TRX1234567 atau 1234567" class="w-full mt-1 p-3 border rounded-lg font-mono uppercase text-lg tracking-wide">
         <p id="trxWarn" class="hidden mt-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg p-2"></p>
       </div>
       <label class="flex items-center gap-1 text-xs text-gray-600"><input type="checkbox" id="autoSave"> Tambah otomatis hanya jika dua bacaan kamera berurutan identik</label>
@@ -115,7 +115,7 @@
   </div>
   <div class="p-4 space-y-2">
     <p id="ocrStatus" class="text-center text-green-300 text-xs min-h-4"></p>
-    <p class="text-center text-gray-300 text-xs">Letakkan <b>satu baris Trx Id (7 angka)</b> tepat di dalam kotak hijau, sejajar dan tajam. Tahan kamera diam sekitar 1 detik saat tombol ditekan.</p>
+    <p class="text-center text-gray-300 text-xs">Letakkan <b>satu baris Trx Id</b> (yang dibaca hanya 7 angkanya) tepat di dalam kotak hijau, sejajar dan tajam. Tahan kamera diam sekitar 1 detik saat tombol ditekan.</p>
     <button id="snapBtn" onclick="snap()" class="w-full bg-green-600 text-white p-3 rounded-lg font-semibold disabled:opacity-60">Ambil & Baca Trx Id</button>
   </div>
 </div>
@@ -125,8 +125,8 @@
 <script>
 // ====== GANTI dengan URL Web App Apps Script Anda (yang berakhiran /exec) ======
 const API_URL = 'https://script.google.com/macros/s/AKfycby8or6ltHqVZK_nUqaAYdtSlie6_LziLuLNqe5Ay8IZDeBhb_Ex8n9A6GdxgyRBZvTc5Q/exec';
-const MIN_SERVER_VERSION = 11;
-const TRX_DIGITS = 7;      // Trx Id = TRX + 7 angka; yang disimpan hanya 7 angka
+const MIN_SERVER_VERSION = 12;
+const TRX_DIGITS = 7;      // Trx Id = awalan huruf bebas + 7 angka; yang disimpan hanya 7 angka
 const FRAMES = 3;          // jumlah foto berurutan per pembacaan (konsensus)
 
 // ====== DAFTAR KURIR & KENDARAAN (edit di sini; tidak membaca Google Drive sehingga langsung muncul) ======
@@ -194,16 +194,16 @@ function beep() {
 const store = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
 const load = k => { try { return localStorage.getItem(k) || ""; } catch (e) { return ""; } };
 
-/* ====== ATURAN TRX ID: TRX + 7 angka. Yang disimpan hanya 7 angkanya ======
-   Diterima : TRX1234567, trx 1234567, 1234567  -> "1234567"
-   Ditolak  : TRX123456 (6 angka), TRX123456777 (9 angka), ada huruf/simbol lain */
+/* ====== ATURAN TRX ID: yang dipatok hanya 7 angka. Awalan huruf bebas (TRX, TRXX, TR, TRXXX, atau tanpa awalan) ======
+   Diterima : TRX1234567, TRXX1234567, TR1234567, 1234567  -> "1234567"
+   Ditolak  : 123456 / TRX123456 (6 angka), 123456777 / TRX123456777 (9 angka), huruf di tengah angka (12A4567) */
 function parseTrx(v) {
   const s = String(v || '').toUpperCase().replace(/\s+/g, '');
   if (!s) return { ok: false, msg: 'Trx Id belum diisi.' };
-  const m = s.match(/^(?:TRX)?(\d+)$/);
-  if (!m) return { ok: false, msg: 'Format "' + s + '" salah. Trx Id harus tepat ' + TRX_DIGITS + ' angka (contoh 1234567, awalan TRX boleh). Periksa kode.' };
+  const m = s.match(/^[A-Z:._-]*(\d+)$/);
+  if (!m) return { ok: false, msg: 'Format "' + s + '" salah. Isi harus tepat ' + TRX_DIGITS + ' angka (boleh diawali huruf, contoh TRX1234567). Periksa kode.' };
   if (m[1].length !== TRX_DIGITS)
-    return { ok: false, msg: 'Kode "' + m[1] + '" terbaca ' + m[1].length + ' angka, seharusnya tepat ' + TRX_DIGITS + ' angka. Periksa kode pada struk.' };
+    return { ok: false, msg: 'Kode "' + s + '" berisi ' + m[1].length + ' angka (' + m[1] + '), seharusnya tepat ' + TRX_DIGITS + ' angka. Periksa kode pada struk.' };
   return { ok: true, digits: m[1] };
 }
 
@@ -391,14 +391,17 @@ async function uploadAll() {
 }
 $('trxId').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addStruk(); } });
 
-/* ====== OCR: hanya mencari TRX + angka. Tanpa tebakan: huruf tidak pernah diubah jadi angka ======
+/* ====== OCR: yang dicari hanya deret angka Trx Id. Awalan huruf diabaikan, huruf tidak pernah diubah jadi angka ======
    Satu bacaan menghasilkan: ok (tepat 7 angka) | bad (angka salah jumlah / lebih dari satu kode) | none */
 function extractTrx(raw) {
-  const t = String(raw || '').toUpperCase();
-  const pick = re => { const a = []; let m; while ((m = re.exec(t))) a.push(m[1]); return a; };
-  let found = pick(/TRX[ \t]*(\d+)/g);                 // jika ada awalan TRX, angka setelahnya jadi patokan
-  if (!found.length) found = pick(/(\d{5,})/g);        // tanpa TRX: deret angka 5+ digit (angka pendek diabaikan)
-  const uniq = [...new Set(found)];
+  const toks = String(raw || '').toUpperCase().split(/[\s:]+/).filter(Boolean), pre = [], bare = [];
+  toks.forEach(t => {
+    let m = t.match(/^[A-Z]+(\d{4,})$/);               // huruf + angka menempel (TRX1234567, TR1234567, ...) = kode Trx Id
+    if (m) return pre.push(m[1]);
+    m = t.match(/^(\d{4,})$/);                          // deret angka berdiri sendiri (angka pendek <4 digit diabaikan)
+    if (m) bare.push(m[1]);
+  });
+  const uniq = [...new Set(pre.length ? pre : bare)];  // yang berawalan huruf didahulukan
   if (!uniq.length) return { s: 'none' };
   if (uniq.length === 1 && uniq[0].length === TRX_DIGITS) return { s: 'ok', d: uniq[0] };
   return { s: 'bad', list: uniq };                   // salah jumlah angka, atau terbaca beberapa kode berbeda
@@ -441,11 +444,11 @@ function prepareOCR() {
         else if (ocrBusy) setInfo('Menyiapkan OCR... ' + pct + '%');
         else setStatus(m.status + ' ' + pct + '%');
       }
-    });
+    }, { load_system_dawg: '0', load_freq_dawg: '0' });   // matikan kamus kata: lebih cepat & angka tidak "dikoreksi" jadi kata
     // Hanya karakter yang mungkin ada di baris "Trx Id : TRX1234567" yang boleh terbaca
     await worker.setParameters({
       tessedit_pageseg_mode: Tesseract.PSM.SINGLE_LINE,
-      tessedit_char_whitelist: 'TRXIDtrxid: 0123456789',
+      tessedit_char_whitelist: 'TRXDtrxd: 0123456789',
       user_defined_dpi: '300',
       preserve_interword_spaces: '1'
     });
@@ -546,7 +549,7 @@ async function snap() {
       let msg;
       if (r.s === 'conflict') msg = 'Bacaan tidak konsisten (' + r.list.join(' / ') + '). Periksa kode, scan ulang dengan lebih tajam, atau ketik manual.';
       else if (r.s === 'bad') msg = 'Terbaca ' + r.list.map(d => d + ' (' + d.length + ' angka)').join(', ') + ', padahal Trx Id harus tepat ' + TRX_DIGITS + ' angka. Periksa kode pada struk, lalu scan ulang atau ketik manual.';
-      else msg = 'Trx Id tidak terbaca dengan yakin. Dekatkan, perjelas cahaya, pastikan baris TRX masuk kotak hijau, lalu scan ulang atau ketik manual.';
+      else msg = 'Trx Id tidak terbaca dengan yakin. Dekatkan, perjelas cahaya, pastikan baris Trx Id masuk kotak hijau, lalu scan ulang atau ketik manual.';
       setWarn(msg); toast('Trx Id tidak diterima. Periksa kode.', false, 6000);
     }
   } catch (e) { toast(e.message || 'Gagal membaca struk.', false, 6000); }
