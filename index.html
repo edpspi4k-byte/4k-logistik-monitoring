@@ -36,13 +36,13 @@
       <div class="text-sm font-semibold text-gray-700">Member Loyalty <span id="loyCount" class="text-xs font-normal text-gray-500"></span></div>
       <button onclick="loadLoyalty()" class="text-xs text-blue-600 underline">Muat ulang</button>
     </div>
-    <input id="loySearch" placeholder="Cari kode / nama member / No PB" class="w-full p-3 border rounded-lg text-sm">
+    <input id="loySearch" placeholder="Cari kode / nama member" class="w-full p-3 border rounded-lg text-sm">
     <select id="loyFilter" class="w-full p-3 border rounded-lg bg-white text-sm">
       <option value="semua">Semua</option>
       <option value="belum">Belum diberikan</option>
       <option value="sudah">Sudah diberikan</option>
     </select>
-    <p class="text-xs text-gray-500">Centang (✔ Diberikan) terisi otomatis saat struk member diupload. Member yang sudah dicentang tidak akan memunculkan peringatan lagi.</p>
+    <p class="text-xs text-gray-500">Centang (✔ Diberikan) terisi otomatis saat struk member diupload, lengkap dengan Trx hadiah, ID pengantaran, dan tanggal antar (juga tersimpan di sheet loyalty kolom F-H). Member yang sudah dicentang tidak akan memunculkan peringatan lagi.</p>
     <div id="loyList" class="space-y-2 max-h-[60vh] overflow-y-auto"></div>
   </div>
 
@@ -187,7 +187,7 @@ function makeRunner(ok = () => {}, fail = () => {}) {
   const set = (t, c) => { el.textContent = t; el.className = 'text-xs text-center ' + c; };
   if (API_URL.indexOf('script.google.com') < 0) return set('⚠ API_URL di index.html belum diisi URL /exec', 'text-red-600');
   fetch(API_URL).then(r => r.text()).then(t => {
-    const j = JSON.parse(t), ok = Number(j.versi) >= 13;
+    const j = JSON.parse(t), ok = Number(j.versi) >= 14;
     set('● Server terhubung ' + (j.versi ? '(kode v' + j.versi + ')' : '') + (ok ? '' : ' - kode LAMA: deploy ulang dengan New version'), ok ? 'text-green-600' : 'text-amber-600');
   }).catch(() => set('⚠ Server tidak terhubung. Cek URL /exec dan deployment (akses: Anyone).', 'text-red-600'));
 })();
@@ -557,15 +557,18 @@ function renderLoyalty() {
   $('loyCount').textContent = '(' + (loyData.length - pending) + ' sudah, ' + pending + ' belum, dari ' + loyData.length + ' member)';
   const rows = loyData.filter(m =>
     (f === 'semua' || (f === 'sudah') === m.done) &&
-    (!q || (m.kode + ' ' + m.nama + ' ' + m.items.map(x => x.pb).join(' ')).toLowerCase().includes(q)));
+    (!q || (m.kode + ' ' + m.nama).toLowerCase().includes(q)));
   if (!rows.length) { $('loyList').innerHTML = '<div class="text-sm text-gray-500">Tidak ada data.</div>'; return; }
   $('loyList').innerHTML = '<div class="overflow-x-auto"><table class="w-full text-xs border-collapse"><thead><tr class="bg-gray-100 text-left">' +
-    '<th class="p-2 border">Kode member</th><th class="p-2 border">Nama member</th><th class="p-2 border">No PB</th><th class="p-2 border text-center">Hadiah</th></tr></thead><tbody>' +
+    '<th class="p-2 border">Kode member</th><th class="p-2 border">Nama member</th><th class="p-2 border text-center">Hadiah</th></tr></thead><tbody>' +
     rows.map(m => '<tr class="' + (m.done ? 'bg-green-50' : 'bg-amber-50') + '"><td class="p-2 border font-mono align-top">' + esc(m.kode) +
       '</td><td class="p-2 border align-top">' + esc(m.nama) +
-      '</td><td class="p-2 border font-mono break-all align-top">' + m.items.map(x => esc(x.pb)).join('<br>') +
-      '</td><td class="p-2 border text-center align-top whitespace-nowrap">' +
-      (m.done ? '<span class="text-green-700 font-semibold">✔ Diberikan</span>' : '<span class="text-amber-700">Belum</span>') + '</td></tr>').join('') +
+      '</td><td class="p-2 border text-center align-top">' +
+      (m.done
+        ? '<div class="text-green-700 font-semibold whitespace-nowrap">✔ Diberikan</div>' +
+          (m.trx ? '<div class="text-[11px] text-gray-600 font-mono">Trx ' + esc(m.trx) + '</div>' +
+                   '<div class="text-[11px] text-gray-500">' + (m.idAntar ? 'ID ' + esc(m.idAntar) + ' • ' : '') + esc(m.tgl) + '</div>' : '')
+        : '<span class="text-amber-700">Belum</span>') + '</td></tr>').join('') +
     '</tbody></table></div>';
 }
 function loadKend() {
