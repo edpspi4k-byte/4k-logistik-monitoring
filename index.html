@@ -187,7 +187,7 @@ function makeRunner(ok = () => {}, fail = () => {}) {
   const set = (t, c) => { el.textContent = t; el.className = 'text-xs text-center ' + c; };
   if (API_URL.indexOf('script.google.com') < 0) return set('⚠ API_URL di index.html belum diisi URL /exec', 'text-red-600');
   fetch(API_URL).then(r => r.text()).then(t => {
-    const j = JSON.parse(t), ok = Number(j.versi) >= 14;
+    const j = JSON.parse(t), ok = Number(j.versi) >= 15;
     set('● Server terhubung ' + (j.versi ? '(kode v' + j.versi + ')' : '') + (ok ? '' : ' - kode LAMA: deploy ulang dengan New version'), ok ? 'text-green-600' : 'text-amber-600');
   }).catch(() => set('⚠ Server tidak terhubung. Cek URL /exec dan deployment (akses: Anyone).', 'text-red-600'));
 })();
@@ -568,8 +568,18 @@ function renderLoyalty() {
         ? '<div class="text-green-700 font-semibold whitespace-nowrap">✔ Diberikan</div>' +
           (m.trx ? '<div class="text-[11px] text-gray-600 font-mono">Trx ' + esc(m.trx) + '</div>' +
                    '<div class="text-[11px] text-gray-500">' + (m.idAntar ? 'ID ' + esc(m.idAntar) + ' • ' : '') + esc(m.tgl) + '</div>' : '')
-        : '<span class="text-amber-700">Belum</span>') + '</td></tr>').join('') +
+        : '<div class="text-amber-700">Belum</div><label class="mt-1 inline-flex items-center gap-1 text-[10px] text-gray-400 cursor-pointer"><input type="checkbox" class="w-3 h-3" onchange="manualDone(' + loyData.indexOf(m) + ', this)">serah manual</label>') + '</td></tr>').join('') +
     '</tbody></table></div>';
+}
+function manualDone(i, el) {
+  const m = loyData[i];
+  if (!m) { el.checked = false; return; }
+  if (!confirm('Tandai hadiah ' + m.nama + ' (' + m.kode + ') sudah diserahkan secara manual?\n\nTanda ini tidak bisa dibatalkan dari aplikasi.')) { el.checked = false; return; }
+  el.disabled = true;
+  google.script.run
+    .withSuccessHandler(r => { toast(r.message, r.success, 4000); loadLoyalty(); })
+    .withFailureHandler(err => { el.checked = false; el.disabled = false; toast(err.message || err, false, 6000); })
+    .loyaltyManual(U, P, m.kode);
 }
 function loadKend() {
   run().withSuccessHandler(list => {
