@@ -137,7 +137,7 @@
   </div>
   <div class="p-4 space-y-2">
     <p id="ocrStatus" class="text-center text-green-300 text-xs min-h-4"></p>
-    <p class="text-center text-gray-300 text-xs">Posisikan bagian atas struk (baris Trx Id) di dalam kotak hijau. Tahan sebentar saja: begitu tombol ditekan gambar langsung diambil dan kamera menutup, struk boleh diturunkan.</p>
+    <p class="text-center text-gray-300 text-xs">Arahkan baris "Trx Id" (struk) atau "No PB" (surat jalan) ke dalam kotak hijau, boleh miring atau diputar. Hanya angka Trx Id / No PB yang dibaca. Tahan sebentar saja: begitu tombol ditekan gambar langsung diambil dan kamera menutup.</p>
     <button id="snapBtn" onclick="snap()" class="w-full bg-green-600 text-white p-3 rounded-lg font-semibold disabled:opacity-60">Ambil & Baca Struk</button>
   </div>
 </div>
@@ -425,14 +425,39 @@ $('trxId').addEventListener('input', e => {
 });
 $('trxId').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addStruk(); } });
 
-/* ekstraksi Trx Id dari teks hasil OCR (hanya angka 7 digit) */
+/* Ekstraksi Trx Id dari teks hasil OCR. HANYA membaca dua sumber (angkanya sama):
+   1) "No PB : 4329738/spi/10/2026/..."  -> 7 digit sebelum "/spi"
+   2) "Trx Id : TRX4329738"              -> 7 digit setelah "TRX"
+   Angka lain di struk (PLU, total, tanggal, telepon, dll) diabaikan. */
+const OD = '[0-9OoIl|SsBZ]';
+function ocrDigits(v) {
+  v = String(v || '').replace(/[Oo]/g, '0').replace(/[Il|]/g, '1').replace(/[Ss]/g, '5').replace(/B/g, '8').replace(/Z/g, '2');
+  return /^\d{7}$/.test(v) ? v : '';
+}
+function firstMatch(text, src) {
+  const re = new RegExp(src, 'gi'); let m;
+  while ((m = re.exec(text))) { const d = ocrDigits(m[1]); if (d) return d; }
+  return '';
+}
 function extractStruk(raw) {
-  const numbersOnly = String(raw || '').replace(/\D/g, '');
-  const match = numbersOnly.match(/\b\d{7}\b/) || numbersOnly.match(/\d{7}/);
-  return { trx: match ? match[0] : '' };
+  const text = String(raw || '');
+  const pb = firstMatch(text, '(?:^|[^0-9A-Za-z])(' + OD + '{7})\\s*/\\s*[s5]p[i1l|]');
+  const trx = firstMatch(text, 'T\\s*R\\s*[XK]\\s*[:.\\-]?\\s*(' + OD + '{7})(?![0-9])') ||
+              firstMatch(text, 'Trx\\s*Id\\s*[:.\\-]?\\s*(?:T\\s*R\\s*[XK])?\\s*(' + OD + '{7})(?![0-9])');
+  let weak = '';
+  if (!pb && !trx) {
+    const lines = text.split(/\r?\n/);
+    for (let i = 0; i < lines.length && !weak; i++) {
+      if (/trx|n[o0]\.?\s*pb/i.test(lines[i])) {
+        const m = (lines[i] + ' ' + (lines[i + 1] || '')).match(/(?:^|\D)(\d{7})(?!\d)/);
+        if (m) weak = m[1];
+      }
+    }
+  }
+  return { trx: pb || trx || weak, pb, trxLabel: trx, sure: !!(pb || trx), conflict: !!(pb && trx && pb !== trx) };
 }
 
-let stream = null, torchOn = false, ocrBusy = false, ocrReady = null, worker = null;
+let stream = null, torchOn = false, ocrBusy = false, ocrReady = null, worker = null, ocrTry = '';
 const cv = document.createElement('canvas'), ctx = cv.getContext('2d', { willReadFrequently: true });
 const setStatus = t => { $('ocrStatus').textContent = t; };
 const setInfo = t => { const e = $('ocrInfo'); e.textContent = t ? '⏳ ' + t : ''; e.classList.toggle('hidden', !t); };
@@ -453,7 +478,7 @@ function prepareOCR() {
     worker = await Tesseract.createWorker('eng', 1, {
       logger: m => {
         const pct = Math.round((m.progress || 0) * 100);
-        if (m.status === 'recognizing text') setInfo('Membaca struk... ' + pct + '%');
+        if (m.status === 'recognizing text') setInfo('Membaca struk' + ocrTry + '... ' + pct + '%');
         else if (ocrBusy) setInfo('Menyiapkan OCR... ' + pct + '%');
         else setStatus(m.status + ' ' + pct + '%');
       }
@@ -467,7 +492,7 @@ function prepareOCR() {
 function grab() {
   const v = $('cam'), vw = v.videoWidth, vh = v.videoHeight;
   if (!vw) return null;
-  const sx = vw * 0.04, sy = vh * 0.12, sw = vw * 0.92, sh = vh * 0.76, k = Math.min(2, 1400 / sw);
+  const sx = vw * 0.04, sy = vh * 0.12, sw = vw * 0.92, sh = vh * 0.76, k = Math.min(2, 2000 / sw);
   cv.width = Math.round(sw * k); cv.height = Math.round(sh * k);
   ctx.drawImage(v, sx, sy, sw, sh, 0, 0, cv.width, cv.height);
   return cv;
@@ -513,6 +538,15 @@ async function toggleTorch() {
   catch (e) { torchOn = false; }
 }
 
+function rotateCanvas(c, deg) {
+  if (!deg) return c;
+  const o = document.createElement('canvas'), swap = Math.abs(deg) === 90;
+  o.width = swap ? c.height : c.width; o.height = swap ? c.width : c.height;
+  const x = o.getContext('2d');
+  x.translate(o.width / 2, o.height / 2); x.rotate(deg * Math.PI / 180); x.drawImage(c, -c.width / 2, -c.height / 2);
+  return o;
+}
+
 async function snap() {
   if (!stream || ocrBusy) return;
   const c = grab(); if (!c) return toast('Kamera belum siap, coba lagi.', false);
@@ -523,15 +557,34 @@ async function snap() {
   setInfo('Gambar diambil, struk boleh diturunkan. Menyiapkan OCR...');
   try {
     await prepareOCR();
-    setInfo('Membaca struk... 0%');
-    const { data } = await worker.recognize(c);
-    const r = extractStruk(data.text);
-    if (!r.trx) return toast('Trx Id 7 digit angka tidak ditemukan. Coba lagi atau ketik manual.', false, 6000);
-    $('trxId').value = r.trx;
-    beep(); toast('Trx Id terbaca. Periksa lalu tambahkan.', true, 4000);
+    const angles = [0, -90, 90, 180];   // struk bisa terfoto miring/diputar, coba tiap arah sampai Trx Id / No PB ketemu
+    let found = null;
+    for (let i = 0; i < angles.length && !found; i++) {
+      ocrTry = i ? ' (percobaan ' + (i + 1) + '/' + angles.length + ')' : '';
+      setInfo('Membaca struk' + ocrTry + '... 0%');
+      const src = rotateCanvas(c, angles[i]);
+      const { data } = await worker.recognize(src);
+      if (src !== c) src.width = src.height = 0;
+      const r = extractStruk(data.text);
+      if (r.trx) { found = r; break; }
+      // teks tegak sudah terbaca jelas tapi tidak ada Trx Id / No PB: memutar tidak akan membantu
+      if (i === 0 && data.confidence >= 75 && String(data.text).replace(/\s/g, '').length > 120) break;
+    }
+    if (!found) return toast('Trx Id / No PB tidak terbaca. Masukkan baris "Trx Id" atau "No PB" ke kotak hijau, pastikan fokus dan terang. Atau ketik manual.', false, 8000);
+    $('trxId').value = found.trx;
+    beep();
+    if (found.conflict) {
+      toast('Trx Id (' + found.trxLabel + ') dan No PB (' + found.pb + ') terbaca berbeda. Periksa manual lalu tambahkan.', false, 9000);
+      $('trxId').focus(); return;
+    }
+    if (!found.sure) {
+      toast('Angka terbaca kurang pasti (' + found.trx + '). Periksa dulu sebelum ditambahkan.', false, 7000);
+      $('trxId').focus(); return;
+    }
+    toast('Trx Id terbaca' + (found.pb && found.trxLabel ? ' (Trx dan No PB cocok)' : found.pb ? ' dari No PB' : ' dari Trx Id') + '. Periksa lalu tambahkan.', true, 4000);
     if ($('autoSave').checked) addStruk(); else $('trxId').focus();
   } catch (e) { toast(e.message || 'Gagal membaca struk.', false, 6000); }
-  finally { ocrBusy = false; c.width = c.height = 0; setInfo(''); $('camBtn').disabled = false; }
+  finally { ocrBusy = false; ocrTry = ''; c.width = c.height = 0; setInfo(''); $('camBtn').disabled = false; }
 }
 
 function showView(v) {
