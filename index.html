@@ -132,12 +132,12 @@
   <div class="flex-1 flex items-center justify-center overflow-hidden">
     <div id="camWrap" class="relative w-full">
       <video id="cam" playsinline muted class="w-full h-full object-cover block"></video>
-      <div class="absolute inset-x-[4%] inset-y-[12%] border-2 border-green-400 rounded pointer-events-none"></div>
+      <div class="absolute inset-x-[7%] inset-y-[33%] border-2 border-green-400 rounded pointer-events-none shadow-[0_0_0_9999px_rgba(0,0,0,0.5)]"></div>
     </div>
   </div>
   <div class="p-4 space-y-2">
     <p id="ocrStatus" class="text-center text-green-300 text-xs min-h-4"></p>
-    <p class="text-center text-gray-300 text-xs">Arahkan baris "Trx Id" (struk) atau "No PB" (surat jalan) ke dalam kotak hijau, boleh miring atau diputar. Hanya angka Trx Id / No PB yang dibaca. Tahan sebentar saja: begitu tombol ditekan gambar langsung diambil dan kamera menutup.</p>
+    <p class="text-center text-gray-300 text-xs">Dekatkan hingga baris "Trx Id" (struk) atau "No PB" (surat jalan) memenuhi kotak hijau, boleh sedikit miring atau diputar. Hanya angka Trx Id / No PB yang dibaca. Tahan diam sekitar 1 detik saat menekan tombol, lalu kamera menutup.</p>
     <button id="snapBtn" onclick="snap()" class="w-full bg-green-600 text-white p-3 rounded-lg font-semibold disabled:opacity-60">Ambil & Baca Struk</button>
   </div>
 </div>
@@ -429,9 +429,9 @@ $('trxId').addEventListener('keydown', e => { if (e.key === 'Enter') { e.prevent
    1) "No PB : 4329738/spi/10/2026/..."  -> 7 digit sebelum "/spi"
    2) "Trx Id : TRX4329738"              -> 7 digit setelah "TRX"
    Angka lain di struk (PLU, total, tanggal, telepon, dll) diabaikan. */
-const OD = '[0-9OoIl|SsBZ]';
+const OD = '[0-9OoIl|SsBZ]', ODG = OD + '(?:\\s?' + OD + '){6}';
 function ocrDigits(v) {
-  v = String(v || '').replace(/[Oo]/g, '0').replace(/[Il|]/g, '1').replace(/[Ss]/g, '5').replace(/B/g, '8').replace(/Z/g, '2');
+  v = String(v || '').replace(/\s/g, '').replace(/[Oo]/g, '0').replace(/[Il|]/g, '1').replace(/[Ss]/g, '5').replace(/B/g, '8').replace(/Z/g, '2');
   return /^\d{7}$/.test(v) ? v : '';
 }
 function firstMatch(text, src) {
@@ -441,9 +441,9 @@ function firstMatch(text, src) {
 }
 function extractStruk(raw) {
   const text = String(raw || '');
-  const pb = firstMatch(text, '(?:^|[^0-9A-Za-z])(' + OD + '{7})\\s*/\\s*[s5]p[i1l|]');
-  const trx = firstMatch(text, 'T\\s*R\\s*[XK]\\s*[:.\\-]?\\s*(' + OD + '{7})(?![0-9])') ||
-              firstMatch(text, 'Trx\\s*Id\\s*[:.\\-]?\\s*(?:T\\s*R\\s*[XK])?\\s*(' + OD + '{7})(?![0-9])');
+  const pb = firstMatch(text, '(?:^|[^0-9A-Za-z])(' + ODG + ')\\s*/\\s*[s5]p[i1l|]');
+  const trx = firstMatch(text, 'T\\s*R\\s*[XK]\\s*[:.\\-]?\\s*(' + ODG + ')(?![0-9])') ||
+              firstMatch(text, 'Trx\\s*Id\\s*[:.\\-]?\\s*(?:T\\s*R\\s*[XK])?\\s*(' + ODG + ')(?![0-9])');
   let weak = '';
   if (!pb && !trx) {
     const lines = text.split(/\r?\n/);
@@ -457,8 +457,7 @@ function extractStruk(raw) {
   return { trx: pb || trx || weak, pb, trxLabel: trx, sure: !!(pb || trx), conflict: !!(pb && trx && pb !== trx) };
 }
 
-let stream = null, torchOn = false, ocrBusy = false, ocrReady = null, worker = null, ocrTry = '';
-const cv = document.createElement('canvas'), ctx = cv.getContext('2d', { willReadFrequently: true });
+let stream = null, torchOn = false, ocrBusy = false, ocrReady = null, worker = null, ocrTry = '', curPsm = null;
 const setStatus = t => { $('ocrStatus').textContent = t; };
 const setInfo = t => { const e = $('ocrInfo'); e.textContent = t ? '⏳ ' + t : ''; e.classList.toggle('hidden', !t); };
 
@@ -484,29 +483,102 @@ function prepareOCR() {
       }
     });
     await worker.setParameters({ tessedit_pageseg_mode: Tesseract.PSM.SINGLE_BLOCK, preserve_interword_spaces: '1' });
+    curPsm = Tesseract.PSM.SINGLE_BLOCK;
     setStatus('OCR siap.');
   })().catch(e => { ocrReady = null; worker = null; setStatus(''); throw e; });
   return ocrReady;
 }
 
-function grab() {
+/* Area baca = kotak hijau (7% kiri-kanan, 33% atas-bawah). Harus sama dengan kotak di layar kamera. */
+function frameCanvas() {
   const v = $('cam'), vw = v.videoWidth, vh = v.videoHeight;
   if (!vw) return null;
-  const sx = vw * 0.04, sy = vh * 0.12, sw = vw * 0.92, sh = vh * 0.76, k = Math.min(2, 2000 / sw);
-  cv.width = Math.round(sw * k); cv.height = Math.round(sh * k);
-  ctx.drawImage(v, sx, sy, sw, sh, 0, 0, cv.width, cv.height);
-  return cv;
+  const sx = vw * 0.07, sy = vh * 0.33, sw = vw * 0.86, sh = vh * 0.34, k = Math.min(3, 1800 / sw);
+  const c = document.createElement('canvas');
+  c.width = Math.round(sw * k); c.height = Math.round(sh * k);
+  c.getContext('2d', { willReadFrequently: true }).drawImage(v, sx, sy, sw, sh, 0, 0, c.width, c.height);
+  return c;
+}
+/* Ukuran ketajaman (varians Laplacian) untuk memilih frame yang tidak buram */
+function sharpness(c) {
+  const w = 360, h = Math.max(8, Math.round(c.height * w / c.width)), t = document.createElement('canvas');
+  t.width = w; t.height = h;
+  const x = t.getContext('2d', { willReadFrequently: true });
+  x.drawImage(c, 0, 0, w, h);
+  const d = x.getImageData(0, 0, w, h).data, g = new Float32Array(w * h);
+  for (let i = 0, j = 0; i < d.length; i += 4, j++) g[j] = d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114;
+  let s1 = 0, s2 = 0, n = 0;
+  for (let y = 1; y < h - 1; y++) for (let xx = 1; xx < w - 1; xx++) {
+    const p = y * w + xx, l = 4 * g[p] - g[p - 1] - g[p + 1] - g[p - w] - g[p + w];
+    s1 += l; s2 += l * l; n++;
+  }
+  t.width = t.height = 0;
+  const m = s1 / n; return s2 / n - m * m;
+}
+async function captureFrames() {
+  const arr = [];
+  for (let i = 0; i < 5; i++) {
+    const f = frameCanvas(); if (f) arr.push({ c: f, s: sharpness(f) });
+    if (i < 4) await new Promise(r => setTimeout(r, 90));
+  }
+  arr.sort((a, b) => b.s - a.s);
+  arr.slice(2).forEach(o => { o.c.width = o.c.height = 0; });
+  return arr.slice(0, 2).map(o => o.c);   // [tertajam, tertajam kedua]
+}
+
+function filt3(a, sw, sh, useMax) {
+  const o = new Float32Array(a.length);
+  for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
+    let acc = 0, cnt = 0;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const yy = y + dy, xx = x + dx;
+      if (yy < 0 || yy >= sh || xx < 0 || xx >= sw) continue;
+      const v = a[yy * sw + xx];
+      if (useMax) { if (v > acc) acc = v; } else { acc += v; cnt++; }
+    }
+    o[y * sw + x] = useMax ? acc : acc / cnt;
+  }
+  return o;
+}
+/* Abu-abu -> ratakan cahaya (bagi dengan perkiraan warna kertas) -> regangkan kontras */
+function flattenStretch(g, W, H) {
+  const N = W * H, s = 8, sw = Math.max(2, Math.ceil(W / s)), sh = Math.max(2, Math.ceil(H / s));
+  let bg = new Float32Array(sw * sh);
+  for (let y = 0; y < H; y += 2) {
+    const by = Math.min(sh - 1, (y / s) | 0);
+    for (let x = 0; x < W; x += 2) {
+      const k = by * sw + Math.min(sw - 1, (x / s) | 0), v = g[y * W + x];
+      if (v > bg[k]) bg[k] = v;
+    }
+  }
+  bg = filt3(filt3(bg, sw, sh, true), sw, sh, true);
+  bg = filt3(filt3(bg, sw, sh, false), sw, sh, false);
+  const out = new Uint8Array(N), hist = new Uint32Array(256);
+  for (let y = 0; y < H; y++) {
+    const fy = Math.min(sh - 1, Math.max(0, (y + 0.5) / s - 0.5)), y0 = fy | 0, y1 = Math.min(sh - 1, y0 + 1), ty = fy - y0;
+    for (let x = 0; x < W; x++) {
+      const fx = Math.min(sw - 1, Math.max(0, (x + 0.5) / s - 0.5)), x0 = fx | 0, x1 = Math.min(sw - 1, x0 + 1), tx = fx - x0;
+      const b = (bg[y0 * sw + x0] * (1 - tx) + bg[y0 * sw + x1] * tx) * (1 - ty) + (bg[y1 * sw + x0] * (1 - tx) + bg[y1 * sw + x1] * tx) * ty;
+      let v = g[y * W + x] * 235 / Math.max(b, 16);
+      v = v < 0 ? 0 : v > 255 ? 255 : v | 0;
+      out[y * W + x] = v; hist[v]++;
+    }
+  }
+  let acc = 0, lo = 0, hi = 255;
+  for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= N * 0.02) { lo = v; break; } }
+  acc = 0;
+  for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= N * 0.98) { hi = v; break; } }
+  const span = Math.max(1, hi - lo);
+  for (let i = 0; i < N; i++) { let v = (out[i] - lo) * 255 / span; out[i] = v < 0 ? 0 : v > 255 ? 255 : v; }
+  return out;
 }
 function preprocess(c) {
-  const im = ctx.getImageData(0, 0, c.width, c.height), d = im.data, n = d.length / 4, hist = new Uint32Array(256);
-  for (let i = 0; i < d.length; i += 4) { const y = (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) | 0; d[i] = y; hist[y]++; }
-  let acc = 0, lo = 0, hi = 255;
-  for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= n * 0.02) { lo = v; break; } }
-  acc = 0;
-  for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= n * 0.98) { hi = v; break; } }
-  const span = Math.max(1, hi - lo);
-  for (let i = 0; i < d.length; i += 4) { let y = (d[i] - lo) * 255 / span; y = y < 0 ? 0 : y > 255 ? 255 : y; d[i] = d[i + 1] = d[i + 2] = y; }
-  ctx.putImageData(im, 0, 0);
+  const x = c.getContext('2d', { willReadFrequently: true }), W = c.width, H = c.height;
+  const im = x.getImageData(0, 0, W, H), d = im.data, N = W * H, g = new Uint8Array(N);
+  for (let i = 0, j = 0; j < N; i += 4, j++) g[j] = (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) | 0;
+  const o = flattenStretch(g, W, H);
+  for (let i = 0, j = 0; j < N; i += 4, j++) d[i] = d[i + 1] = d[i + 2] = o[j];
+  x.putImageData(im, 0, 0);
 }
 
 async function openScanner() {
@@ -546,45 +618,86 @@ function rotateCanvas(c, deg) {
   x.translate(o.width / 2, o.height / 2); x.rotate(deg * Math.PI / 180); x.drawImage(c, -c.width / 2, -c.height / 2);
   return o;
 }
+/* Baca satu gambar; jika tidak ketemu, coba mode segmentasi kedua (teks tersebar) */
+async function readOne(src, allowSparse) {
+  const modes = allowSparse ? [Tesseract.PSM.SINGLE_BLOCK, Tesseract.PSM.SPARSE_TEXT] : [Tesseract.PSM.SINGLE_BLOCK];
+  let last = null;
+  for (const m of modes) {
+    if (curPsm !== m) { await worker.setParameters({ tessedit_pageseg_mode: m }); curPsm = m; }
+    const { data } = await worker.recognize(src);
+    const r = extractStruk(data.text);
+    if (r.trx) return { r, data };
+    last = data;
+  }
+  return { r: null, data: last };
+}
 
 async function snap() {
   if (!stream || ocrBusy) return;
-  const c = grab(); if (!c) return toast('Kamera belum siap, coba lagi.', false);
-  preprocess(c);
-  ocrBusy = true; $('camBtn').disabled = true;
+  ocrBusy = true; $('camBtn').disabled = true; $('snapBtn').disabled = true;
   if (navigator.vibrate) navigator.vibrate(60);
-  closeScanner();
-  setInfo('Gambar diambil, struk boleh diturunkan. Menyiapkan OCR...');
+  setStatus('Tahan diam sebentar...');
+  let frames = [];
   try {
+    frames = await captureFrames();
+    closeScanner();
+    if (!frames.length) return toast('Kamera belum siap, coba lagi.', false);
+    frames.forEach(preprocess);
+    setInfo('Gambar diambil, struk boleh diturunkan. Menyiapkan OCR...');
     await prepareOCR();
-    const angles = [0, -90, 90, 180];   // struk bisa terfoto miring/diputar, coba tiap arah sampai Trx Id / No PB ketemu
-    let found = null;
-    for (let i = 0; i < angles.length && !found; i++) {
+
+    // 1) frame tertajam: cari Trx Id / No PB, coba tiap arah putar sampai ketemu
+    const angles = [0, -90, 90, 180];
+    let first = null, ang = 0;
+    for (let i = 0; i < angles.length; i++) {
       ocrTry = i ? ' (percobaan ' + (i + 1) + '/' + angles.length + ')' : '';
       setInfo('Membaca struk' + ocrTry + '... 0%');
-      const src = rotateCanvas(c, angles[i]);
-      const { data } = await worker.recognize(src);
-      if (src !== c) src.width = src.height = 0;
-      const r = extractStruk(data.text);
-      if (r.trx) { found = r; break; }
-      // teks tegak sudah terbaca jelas tapi tidak ada Trx Id / No PB: memutar tidak akan membantu
-      if (i === 0 && data.confidence >= 75 && String(data.text).replace(/\s/g, '').length > 120) break;
+      const src = rotateCanvas(frames[0], angles[i]);
+      const res = await readOne(src, i === 0);
+      if (src !== frames[0]) src.width = src.height = 0;
+      if (res.r) { first = res.r; ang = angles[i]; break; }
+      if (i === 0 && res.data && res.data.confidence >= 75 && String(res.data.text).replace(/\s/g, '').length > 120) break;
     }
-    if (!found) return toast('Trx Id / No PB tidak terbaca. Masukkan baris "Trx Id" atau "No PB" ke kotak hijau, pastikan fokus dan terang. Atau ketik manual.', false, 8000);
-    $('trxId').value = found.trx;
+    if (!first) return toast('Trx Id / No PB tidak terbaca. Dekatkan baris "Trx Id" atau "No PB" ke kotak hijau, pastikan fokus dan terang. Atau ketik manual.', false, 8000);
+
+    // 2) konfirmasi: frame tertajam kedua harus membaca angka yang sama
+    let second = null;
+    if (frames[1]) {
+      ocrTry = ' (konfirmasi)'; setInfo('Memastikan angka... 0%');
+      const src = rotateCanvas(frames[1], ang);
+      second = (await readOne(src, true)).r;
+      if (src !== frames[1]) src.width = src.height = 0;
+    }
+
+    $('trxId').value = first.trx;
     beep();
-    if (found.conflict) {
-      toast('Trx Id (' + found.trxLabel + ') dan No PB (' + found.pb + ') terbaca berbeda. Periksa manual lalu tambahkan.', false, 9000);
+    const from = first.pb ? 'No PB' : 'Trx Id';
+    if (first.conflict) {
+      toast('Trx Id (' + first.trxLabel + ') dan No PB (' + first.pb + ') terbaca berbeda. Periksa manual lalu tambahkan.', false, 9000);
       $('trxId').focus(); return;
     }
-    if (!found.sure) {
-      toast('Angka terbaca kurang pasti (' + found.trx + '). Periksa dulu sebelum ditambahkan.', false, 7000);
+    if (second && second.trx !== first.trx) {
+      toast('Dua pembacaan berbeda (' + first.trx + ' dan ' + second.trx + '). Periksa manual lalu tambahkan.', false, 9000);
       $('trxId').focus(); return;
     }
-    toast('Trx Id terbaca' + (found.pb && found.trxLabel ? ' (Trx dan No PB cocok)' : found.pb ? ' dari No PB' : ' dari Trx Id') + '. Periksa lalu tambahkan.', true, 4000);
-    if ($('autoSave').checked) addStruk(); else $('trxId').focus();
+    if (!first.sure) {
+      toast('Angka terbaca kurang pasti (' + first.trx + '). Periksa dulu sebelum ditambahkan.', false, 7000);
+      $('trxId').focus(); return;
+    }
+    const confirmed = (second && second.trx === first.trx) || (first.pb && first.trxLabel && first.pb === first.trxLabel);
+    if (confirmed) {
+      toast('Terbaca dari ' + from + ' dan terkonfirmasi 2 kali. Periksa lalu tambahkan.', true, 4000);
+      if ($('autoSave').checked) addStruk(); else $('trxId').focus();
+    } else {
+      toast('Terbaca dari ' + from + ' (baru 1 kali). Periksa angkanya lalu tekan Tambah.', true, 6000);
+      $('trxId').focus();
+    }
   } catch (e) { toast(e.message || 'Gagal membaca struk.', false, 6000); }
-  finally { ocrBusy = false; ocrTry = ''; c.width = c.height = 0; setInfo(''); $('camBtn').disabled = false; }
+  finally {
+    closeScanner(); ocrBusy = false; ocrTry = '';
+    frames.forEach(f => { f.width = f.height = 0; });
+    setInfo(''); $('camBtn').disabled = false; $('snapBtn').disabled = false;
+  }
 }
 
 function showView(v) {
